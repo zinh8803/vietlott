@@ -223,6 +223,42 @@ def sync_draws(
     if not url:
         raise ValueError(f"Không hỗ trợ product_code={product_code!r}")
 
+    # ── Kiểm tra và xóa dữ liệu mẫu (seed) trước khi cào dữ liệu thật ──────────
+    from sqlalchemy import select, delete
+    from app.db.models import Feature, Prediction, UserTicket
+    
+    seed_draws = db.execute(
+        select(Draw)
+        .where(
+            Draw.product_code == product_code,
+            Draw.source_url == "seed"
+        )
+    ).scalars().all()
+    
+    if seed_draws:
+        logger.info(f"Phát hiện {len(seed_draws)} kỳ quay mẫu cho {product_code}. Đang tiến hành xóa sạch dữ liệu mẫu...")
+        seed_draw_ids = [d.draw_id for d in seed_draws]
+        
+        # 1. Tìm các prediction liên quan
+        pred_ids = db.scalars(
+            select(Prediction.prediction_id)
+            .where(Prediction.as_of_draw_id.in_(seed_draw_ids))
+        ).all()
+        
+        # 2. Xóa vé (tickets) liên quan
+        if pred_ids:
+            db.execute(delete(UserTicket).where(UserTicket.prediction_id.in_(pred_ids)))
+            db.execute(delete(Prediction).where(Prediction.prediction_id.in_(pred_ids)))
+            
+        # 3. Xóa features liên quan
+        db.execute(delete(Feature).where(Feature.target_draw_id.in_(seed_draw_ids)))
+        
+        # 4. Xóa chính các kỳ quay mẫu
+        db.execute(delete(Draw).where(Draw.draw_id.in_(seed_draw_ids)))
+        
+        db.commit()
+        logger.info(f"Đã dọn dẹp sạch dữ liệu mẫu cho {product_code}. Bắt đầu cào kết quả thật...")
+
     logger.info(f"Crawling {product_code} từ {url}")
 
     try:
