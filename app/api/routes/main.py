@@ -446,9 +446,18 @@ def check_and_sync_background(background_tasks: BackgroundTasks, db: Session = D
 
         if needs_crawl:
             LAST_CRAWL_ATTEMPT[product_code] = time.time()
-            background_tasks.add_task(bg_sync_draws, product_code)
-            results[product_code] = {"status": "queued", "message": "Đã thêm tác vụ cào dữ liệu mới vào hàng đợi."}
-            logger.info(f"Kích hoạt cào ngầm background task cho {product_code}")
+            try:
+                # Thử đẩy vào hàng đợi Celery Queue
+                from app.workers.tasks import sync_draws_task
+                sync_draws_task.delay(product_code)
+                results[product_code] = {"status": "queued", "message": "Đã thêm vào Celery Queue."}
+                logger.info(f"Đã kích hoạt cào ngầm Celery Queue cho {product_code}")
+            except Exception as e:
+                # Fallback sang FastAPI BackgroundTasks nếu Celery/Redis chưa được cấu hình
+                logger.warning(f"Không thể đẩy vào Celery Queue ({e}). Fallback sang FastAPI BackgroundTasks.")
+                background_tasks.add_task(bg_sync_draws, product_code)
+                results[product_code] = {"status": "queued", "message": "Đã thêm vào hàng đợi FastAPI (Fallback)."}
+                logger.info(f"Kích hoạt cào ngầm FastAPI BackgroundTasks cho {product_code}")
         else:
             results[product_code] = {"status": "up-to-date", "message": "Dữ liệu hiện tại đã mới nhất."}
 
