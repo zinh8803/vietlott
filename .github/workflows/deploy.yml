@@ -23,7 +23,6 @@ jobs:
             git pull origin main
             
             # Cập nhật backend & restart service
-            source venv/bin/activate
             pip install -r requirements.txt
             sudo systemctl restart vietlot-backend
             
