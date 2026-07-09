@@ -383,23 +383,32 @@ def check_and_sync_background(background_tasks: BackgroundTasks, db: Session = D
     results = {}
     
     for product_code in ("MEGA_645", "POWER_655", "BINGO18"):
-        # Giới hạn tần suất check thực tế: không check quá 1 lần mỗi 2 phút cho Bingo18, và 15 phút cho Mega/Power
-        throttle_seconds = 120 if product_code == "BINGO18" else 900
-        last_attempt = LAST_CRAWL_ATTEMPT.get(product_code, 0.0)
-        if time.time() - last_attempt < throttle_seconds:
-            results[product_code] = {"status": "throttled", "message": "Vừa mới kiểm tra gần đây."}
-            continue
-            
-        # Truy vấn kỳ quay mới nhất hiện có trong DB
+        # Truy vấn kỳ quay mới nhất và kiểm tra xem có dữ liệu mẫu (seed) hay không
         latest_draw = db.execute(
             select(Draw)
             .where(Draw.product_code == product_code)
             .order_by(Draw.draw_no.desc())
         ).scalars().first()
-        
+
+        has_seed = False
+        if latest_draw:
+            has_seed = db.execute(
+                select(Draw.draw_id)
+                .where(Draw.product_code == product_code, Draw.source_url == "seed")
+                .limit(1)
+            ).scalar() is not None
+
+        # Giới hạn tần suất check thực tế (bỏ qua nếu là dữ liệu mẫu hoặc trống để cào thật ngay)
+        if not has_seed and latest_draw:
+            throttle_seconds = 120 if product_code == "BINGO18" else 900
+            last_attempt = LAST_CRAWL_ATTEMPT.get(product_code, 0.0)
+            if time.time() - last_attempt < throttle_seconds:
+                results[product_code] = {"status": "throttled", "message": "Vừa mới kiểm tra gần đây."}
+                continue
+
         needs_crawl = False
         
-        if not latest_draw:
+        if not latest_draw or has_seed:
             needs_crawl = True
         else:
             latest_date = latest_draw.draw_date
