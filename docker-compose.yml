@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: vietlott_db
+    restart: always
+    environment:
+      MYSQL_DATABASE: vietlott_ml
+      MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+    ports:
+      - "3307:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+
+  redis:
+    image: redis:alpine
+    container_name: vietlott_redis
+    restart: always
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vietlott_backend
+    restart: always
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DATABASE_URL=mysql+pymysql://root:@db:3306/vietlott_ml
+      - REDIS_URL=redis://redis:6379/0
+      - DEBUG=false
+      - TIMEZONE=Asia/Ho_Chi_Minh
+      - ARTIFACT_ROOT=/app/artifacts
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend_artifacts:/app/artifacts
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vietlott_celery
+    command: celery -A app.workers.celery_app worker --loglevel=info
+    restart: always
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DATABASE_URL=mysql+pymysql://root:@db:3306/vietlott_ml
+      - REDIS_URL=redis://redis:6379/0
+      - DEBUG=false
+      - TIMEZONE=Asia/Ho_Chi_Minh
+      - ARTIFACT_ROOT=/app/artifacts
+    volumes:
+      - backend_artifacts:/app/artifacts
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: vietlott_frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  db_data:
+  backend_artifacts:

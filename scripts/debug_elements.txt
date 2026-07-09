@@ -1,0 +1,9 @@
+Finding elements with classes related to balls:
+<span class='bong_tron'>: '14'
+<span class='bong_tron'>: '21'
+<span class='bong_tron'>: '26'
+<span class='bong_tron'>: '30'
+<span class='bong_tron'>: '34'
+<span class='bong_tron no-margin-right'>: '35'
+<div class='box_kqtt_nd_chinh text-center'>: '"Các con số dự thưởng phải trùng với số kết quả nhưng không cần theo đúng thứ  tự" Truyền Hình Trực Tiếp Trên Kênh TodayTV - SCTV2 Từ 18h00 – 18h30 Thứ 4 - Thứ 6 - Chủ nhật'
+<p class='box_kqtt_nd_note color_red'>: '"Các con số dự thưởng phải trùng với số kết quả nhưng không cần theo đúng thứ  tự"'

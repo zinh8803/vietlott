@@ -1,0 +1,39 @@
+name: Deploy Vietlott to VPS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy Vietlott
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT }}
+          script: |
+            cd /var/www/vietlott
+            git pull origin main
+            
+            # Cập nhật backend & restart service
+            source venv/bin/activate
+            pip install -r requirements.txt
+            sudo systemctl restart vietlot-backend
+            
+            # Restart Celery queue worker
+            sudo systemctl restart vietlot-worker
+            
+            # Build frontend
+            cd frontend
+            npm install
+            npm run build
+            
+            # Reload Nginx
+            sudo systemctl reload nginx

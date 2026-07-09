@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+ENV/
+env/
+
+# IDEs & Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# Local Environment Configs
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Node & Frontend Build
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+
+# Machine Learning Artifacts & Models
+artifacts/
+*.log
+
+# OS Metadata
+.DS_Store
+Thumbs.db

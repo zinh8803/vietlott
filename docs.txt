@@ -1,0 +1,404 @@
+# Tài liệu nghiệp vụ tổng thể cho hệ thống AI dự đoán xổ số Vietlott
+
+## Executive summary
+
+Tài liệu này đề xuất một thiết kế tổng thể cho hệ thống AI dự đoán xổ số Vietlott theo hướng **ML cổ điển, dễ kiểm soát, dễ audit**, dùng **scikit-learn** làm baseline, **LightGBM/XGBoost** làm boosting stack chính, và **MySQL** làm backend lưu trữ metadata, dữ liệu vận hành, lịch sử dự đoán và kết quả đánh giá. Về nghiệp vụ, **Mega 6/45** và **Power 6/55** phải được xem là **hai pipeline độc lập** vì chúng có không gian số khác nhau; Mega chọn 6 số từ 01–45, còn Power chọn 6 số từ 01–55 và có thêm một số đặc biệt để xác định Jackpot 2. citeturn28search8turn27view0
+
+Khuyến nghị kỹ thuật cốt lõi là **không mô hình hóa theo kiểu “đoán cả bộ 6 số” bằng một đầu ra duy nhất** ở giai đoạn đầu. Thay vào đó, nên dùng **candidate-level binary classification/ranking**: với mỗi kỳ mục tiêu, hệ thống sinh ra 45 hoặc 55 dòng ứng viên, mỗi dòng tương ứng một số, và nhãn là số đó **có xuất hiện ở kỳ kế tiếp hay không**. Cách làm này bám sát objective nhị phân của **LightGBM** (`objective=binary`) và **XGBoost** (`objective='binary:logistic'`), đồng thời tận dụng tốt baseline như **DummyClassifier**, **LogisticRegression** hoặc **RandomForestClassifier** trong scikit-learn. XGBoost có hỗ trợ multi-output từ bản 1.6 nhưng tài liệu chính thức vẫn ghi nhận đây là tính năng **experimental** và còn hạn chế, nên không nên lấy làm trục chính của phiên bản đầu. citeturn6view0turn9view3turn32view2turn38view1
+
+Về hạ tầng dữ liệu, **MySQL** phù hợp để lưu **draws, features cache, models metadata, predictions, metrics, retrain jobs**; còn **artifact nặng** như model file, report HTML, Parquet/Numpy feature snapshot nên lưu trên filesystem hoặc artifact store, chỉ ghi **URI** trong DB. MySQL 8.4 hỗ trợ kiểu **JSON** native với kiểm tra hợp lệ tự động, định dạng lưu trữ tối ưu, và cho phép dùng **generated columns** để index các scalar trích từ JSON khi cần truy vấn nóng. Nếu đội ngũ muốn quản trị phiên bản model nghiêm túc ngay từ đầu, **MLflow Tracking + Model Registry** là lựa chọn hợp lý vì nó log được parameters, metrics, artifacts và quản lý model version/alias. citeturn13view0turn16view0turn16view3turn30view0turn30view1
+
+Tuy nhiên, hệ thống này chỉ nên định vị là **nền tảng học tập, thí nghiệm và backtest**, không phải hệ thống “cam kết thắng”. Cơ chế sản phẩm Vietlott là **quay số mở thưởng để lựa chọn bộ số trúng**, và Vietlott SMS yêu cầu người tham gia **từ đủ 18 tuổi**, có năng lực hành vi dân sự đầy đủ; đồng thời áp dụng **giới hạn tham gia dự thưởng** đối với nhóm sản phẩm ma trận như Mega 6/45 và Power 6/55. Vì vậy, tài liệu này chủ đích **không đề xuất auto-bet/auto-SMS** và xem mọi kết quả dự đoán như đầu ra nghiên cứu thống kê, không phải lời hứa tài chính. citeturn27view0turn28search0turn28search9turn28search10
+
+## Mục tiêu dự án và nguyên tắc thiết kế
+
+Mục tiêu của dự án là xây dựng một hệ thống có thể **thu thập dữ liệu kỳ quay**, **chuẩn hóa và sinh feature theo cửa sổ thời gian**, **huấn luyện nhiều model cạnh tranh**, **phát hành dự đoán cho kỳ kế tiếp**, rồi **đối chiếu với kết quả chính thức** để cập nhật metrics và kích hoạt retrain có kiểm soát. Vì Power 6/55 và Mega 6/45 có lịch quay, không gian số và cơ chế thưởng khác nhau, dữ liệu phải được tách theo `product_code` ngay từ lớp ingestion và không trộn chung trong cùng một model production. citeturn27view0turn28search8
+
+| Nhóm mục tiêu | Nội dung đề xuất |
+|---|---|
+| Mục tiêu nghiệp vụ | Có pipeline tái lập được từ dữ liệu đầu vào đến dự đoán và đối soát |
+| Mục tiêu kỹ thuật | Train được baseline scikit-learn và 2 challenger boosting là LightGBM/XGBoost |
+| Mục tiêu quản trị | Lưu được model metadata, dataset snapshot, tham số, metrics, artifact URI, trạng thái champion/challenger |
+| Mục tiêu vận hành | Có crawler, worker queue, scheduler, retrain jobs, báo cáo backtest, log lỗi |
+| Không thuộc phạm vi bản đầu | Auto-bet, tối ưu ROI, bonus-number modeling hoàn chỉnh cho Power 6/55, deep learning |
+
+Về nguyên tắc thiết kế, tài liệu này đề xuất bốn nguyên tắc cứng. Thứ nhất, **time-order là luật bất biến**: mọi train/test split phải theo thời gian, vì scikit-learn ghi rõ rằng các cross-validation thông thường là không phù hợp cho dữ liệu chuỗi thời gian do có thể dẫn tới việc train trên tương lai và đánh giá trên quá khứ. Thứ hai, **preprocessing phải đi trong pipeline**, vì `Pipeline` của scikit-learn giúp tránh rò rỉ thống kê từ test vào train. Thứ ba, **baseline luôn phải tồn tại**, tối thiểu là `DummyClassifier`, để biết model phức tạp có thật sự tốt hơn mốc “ngây thơ” hay không. Thứ tư, **artifact và metadata phải tách lớp** để phục vụ audit và rollback. citeturn36search0turn32view0turn32view2turn30view0
+
+## Luồng nghiệp vụ tổng thể
+
+Luồng nghiệp vụ đề xuất gồm bảy chặng liên tục: **ingestion**, **chuẩn hóa**, **feature building**, **train/backtest**, **promote model**, **predict**, và **reconcile**. Ở lớp ingestion, crawler lấy dữ liệu kỳ quay từ nguồn chính thức, lưu raw payload và chuẩn hóa về cấu trúc nội bộ theo từng `product_code`. Ở lớp feature building, dữ liệu được chuyển thành dataset dạng sliding window, trong đó mỗi mẫu chỉ được phép sử dụng thông tin có trước kỳ mục tiêu. Ở lớp train, hệ thống chạy baseline scikit-learn và challenger boosting, sau đó dùng metrics holdout + rolling backtest để chọn champion. Ở lớp predict, champion model sinh phân phối xác suất cho toàn bộ candidate number. Ở lớp reconcile, khi có kết quả chính thức, hệ thống tự động so sánh, chấm điểm, ghi metrics và ra quyết định retrain. Luồng này là cách hiện thực hóa đúng tinh thần **time-series split**, **pipeline safety**, và **artifact-backed tracking**. citeturn36search0turn32view0turn30view0
+
+```mermaid
+flowchart TD
+    A[Scheduler] --> B[Crawler lấy kết quả kỳ quay]
+    B --> C[Validate + dedupe + chuẩn hóa]
+    C --> D[Lưu bảng draws]
+    D --> E[Build sliding window features]
+    E --> F[Lưu bảng features]
+    F --> G[Train baseline scikit-learn]
+    F --> H[Train LightGBM]
+    F --> I[Train XGBoost]
+    G --> J[Holdout + rolling backtest]
+    H --> J
+    I --> J
+    J --> K[Chọn champion]
+    K --> L[Lưu models + artifact URI + metadata]
+    L --> M[Sinh dự đoán kỳ kế tiếp]
+    M --> N[Lưu bảng predictions]
+    O[Kết quả chính thức mới] --> P[Reconcile tự động]
+    P --> Q[Cập nhật bảng metrics]
+    Q --> R[Đánh giá điều kiện retrain]
+    R -->|Đủ điều kiện| S[Tạo retrain_jobs]
+    S --> E
+```
+
+Về chi tiết nghiệp vụ, **thu thập dữ liệu** cần idempotent: cùng một kỳ quay gọi nhiều lần vẫn chỉ cập nhật một bản ghi `draws`. **Tiền xử lý** tối thiểu gồm: sắp xếp 6 số chính tăng dần để thống nhất biểu diễn, chuẩn hóa `draw_date`, `draw_no`, `open_time`, và tách `bonus_number` riêng cho Power 6/55. **Feature engineering** nên gồm hai lớp: lớp vĩ mô theo draw window như tổng, odd/even, low/high, entropy, tần suất lặp; và lớp vi mô theo candidate number như frequency gần đây, recency, gap, EWMA, co-occurrence với các nhóm số gần nhất. Với branch tuyến tính của scikit-learn, cần chuẩn hóa dữ liệu vì tài liệu chính thức nêu rõ nhiều linear model hưởng lợi từ standardization; còn ở branch tree/boosting có thể giữ raw numeric feature nếu đội kỹ thuật đánh giá phù hợp hơn. citeturn32view1turn27view0turn28search8
+
+Dataset sliding window nên được tạo theo dạng sau: với mỗi `target_draw`, lấy `W` kỳ ngay trước đó làm context, rồi sinh ra **một record cho mỗi candidate number** trong không gian số của sản phẩm. Kết quả là Mega 6/45 tạo 45 record cho một kỳ mục tiêu, Power 6/55 tạo 55 record. Nhãn `label` bằng 1 nếu candidate number nằm trong 6 số chính của kỳ mục tiêu, ngược lại bằng 0. Cách này giúp mở rộng số lượng mẫu huấn luyện, đồng thời giữ được objective nhị phân thống nhất cho scikit-learn, LightGBM và XGBoost. Riêng **bonus number của Power 6/55** nên tách thành phase sau, vì về thể lệ nó được quay từ 49 bóng còn lại sau khi đã chọn 6 bóng chính. citeturn27view0turn6view0turn9view3
+
+Trong bước huấn luyện, team nên chạy đồng thời ba nhánh. Nhánh baseline gồm **DummyClassifier** và **LogisticRegression/RandomForestClassifier**; nhánh mạnh hơn là **LightGBM**; nhánh challenger là **XGBoost**. Với LightGBM, cần kiểm soát overfit vì tài liệu chính thức nêu rằng thuật toán **leaf-wise** có thể overfit nếu không chỉnh tham số hợp lý, đặc biệt là `num_leaves`, `max_depth`, `min_data_in_leaf`, và cặp `learning_rate`–`num_iterations`. Với XGBoost, objective mặc định của `XGBClassifier` là `binary:logistic`, phù hợp trực tiếp với bài toán candidate-level binary classification. Khi cần tìm siêu tham số với ngân sách compute hữu hạn, `RandomizedSearchCV` có đặc tính thuận lợi hơn exhaustive grid search trong nhiều trường hợp. citeturn7view0turn7view1turn7view2turn9view3turn34search5
+
+## Thiết kế dữ liệu và API
+
+Về lưu trữ, **MySQL** nên được dùng như lớp **system-of-record** cho dữ liệu vận hành và metadata, còn model artifact nên được lưu ở filesystem/artifact store. Đây là cách chia lớp phù hợp với thực hành của MLflow giữa **backend store** và **artifact store**, đồng thời tận dụng các kiểu **DATE/DATETIME/TIMESTAMP**, **AUTO_INCREMENT**, và **JSON** của MySQL. Lưu ý quan trọng là `JSON` của MySQL có validation tự động nhưng **không index trực tiếp**; nếu có nhu cầu query sâu vào JSON cho báo cáo hoặc dashboard, nên dùng **generated columns** rồi đánh index lên generated column đó. citeturn30view0turn14view0turn14view3turn13view0turn14view2turn16view0
+
+| Bảng | Vai trò | Trường chính đề xuất | Kiểu chính |
+|---|---|---|---|
+| `draws` | Lưu kết quả kỳ quay chuẩn hóa | `draw_id`, `product_code`, `draw_no`, `draw_date`, `n1..n6`, `bonus_number`, `raw_payload`, `source_url` | `BIGINT`, `VARCHAR`, `DATE`, `TINYINT`, `JSON`, `VARCHAR` |
+| `features` | Feature cache ở mức candidate/target_draw | `feature_id`, `target_draw_id`, `candidate_no`, `window_size`, `feature_version`, `feature_json`, `label` | `BIGINT`, `SMALLINT`, `VARCHAR`, `JSON`, `TINYINT` |
+| `models` | Metadata model/version | `model_id`, `algorithm`, `product_code`, `feature_version`, `hyperparams_json`, `artifact_uri`, `status` | `BIGINT`, `VARCHAR`, `JSON`, `VARCHAR`, `DATETIME(6)` |
+| `predictions` | Lưu lần sinh dự đoán | `prediction_id`, `model_id`, `predicted_draw_no`, `probabilities_json`, `top6_json`, `status` | `BIGINT`, `JSON`, `VARCHAR`, `DATETIME(6)` |
+| `metrics` | Lưu metric holdout/backtest/live | `metric_id`, `model_id`, `eval_scope`, `fold_no`, `precision_at_6`, `top_k_accuracy`, `log_loss`, `brier_score` | `BIGINT`, `VARCHAR`, `SMALLINT`, `DECIMAL` |
+| `retrain_jobs` | Quản lý job retrain | `job_id`, `product_code`, `trigger_reason`, `status`, `best_model_id`, `log_uri` | `BIGINT`, `VARCHAR`, `TEXT`, `DATETIME(6)` |
+
+Về API nội bộ, kiến trúc nên thiên về **job-oriented API** thay vì blocking API. Nghĩa là endpoint tạo job sẽ trả `job_id`, còn crawler/feature build/train/reconcile chạy ở worker queue. Điều này phù hợp với mô hình task queue của Celery và giúp API không bị chặn bởi các bước train/backtest kéo dài. citeturn19view0turn19view1
+
+| Endpoint nội bộ | Mục đích | Ghi chú |
+|---|---|---|
+| `POST /internal/crawler/sync-draws` | Đồng bộ kết quả kỳ quay mới | Có thể truyền `product_code`, `from_date`, `force` |
+| `POST /internal/features/build` | Sinh sliding-window features | Chạy theo range kỳ quay hoặc theo product |
+| `POST /internal/train` | Tạo retrain job | Trả `job_id`, không train đồng bộ |
+| `POST /internal/predict/next` | Sinh dự đoán kỳ kế tiếp | Ghi đầy đủ `as_of_draw_id`, `model_id`, `generated_at` |
+| `POST /internal/reconcile` | Đối chiếu prediction với kết quả chính thức | Cập nhật `predictions` và `metrics` |
+| `GET /internal/models` | Danh sách model/version | Hỗ trợ lọc champion/challenger |
+| `GET /internal/reports/backtests/{model_id}` | Đọc báo cáo backtest | Trả JSON hoặc link artifact |
+
+Ví dụ DDL dưới đây dùng MySQL 8.4, ưu tiên **scalar column cho các trường query nóng**, còn **JSON** cho cấu trúc linh hoạt như raw payload, feature vector, hyperparameters, probability map. Đây là cách cân bằng giữa truy vấn vận hành và tính linh hoạt của schema. citeturn13view0turn14view0turn14view3turn16view3
+
+```sql
+CREATE TABLE draws (
+    draw_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    product_code VARCHAR(32) NOT NULL,
+    draw_no BIGINT UNSIGNED NOT NULL,
+    draw_date DATE NOT NULL,
+    open_time DATETIME NULL,
+    n1 TINYINT UNSIGNED NOT NULL,
+    n2 TINYINT UNSIGNED NOT NULL,
+    n3 TINYINT UNSIGNED NOT NULL,
+    n4 TINYINT UNSIGNED NOT NULL,
+    n5 TINYINT UNSIGNED NOT NULL,
+    n6 TINYINT UNSIGNED NOT NULL,
+    bonus_number TINYINT UNSIGNED NULL,
+    source_url VARCHAR(512) NULL,
+    raw_payload JSON NULL,
+    ingested_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    UNIQUE KEY uk_draw_product_no (product_code, draw_no),
+    KEY idx_draw_product_date (product_code, draw_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE features (
+    feature_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    product_code VARCHAR(32) NOT NULL,
+    target_draw_id BIGINT UNSIGNED NOT NULL,
+    candidate_no TINYINT UNSIGNED NOT NULL,
+    window_size SMALLINT UNSIGNED NOT NULL,
+    feature_version VARCHAR(64) NOT NULL,
+    dataset_role VARCHAR(16) NOT NULL,
+    feature_json JSON NULL,
+    feature_uri VARCHAR(512) NULL,
+    label TINYINT(1) NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    UNIQUE KEY uk_feature_sample (product_code, target_draw_id, candidate_no, window_size, feature_version),
+    KEY idx_feature_lookup (product_code, feature_version, dataset_role),
+    CONSTRAINT fk_features_draw
+        FOREIGN KEY (target_draw_id) REFERENCES draws(draw_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE models (
+    model_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    model_name VARCHAR(128) NOT NULL,
+    algorithm VARCHAR(32) NOT NULL,
+    product_code VARCHAR(32) NOT NULL,
+    task_type VARCHAR(32) NOT NULL,
+    feature_version VARCHAR(64) NOT NULL,
+    window_size SMALLINT UNSIGNED NOT NULL,
+    train_from_draw_id BIGINT UNSIGNED NOT NULL,
+    train_to_draw_id BIGINT UNSIGNED NOT NULL,
+    valid_from_draw_id BIGINT UNSIGNED NULL,
+    valid_to_draw_id BIGINT UNSIGNED NULL,
+    hyperparams_json JSON NOT NULL,
+    metrics_summary_json JSON NULL,
+    artifact_uri VARCHAR(512) NOT NULL,
+    model_checksum CHAR(64) NULL,
+    framework_versions_json JSON NULL,
+    status VARCHAR(16) NOT NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    promoted_at DATETIME(6) NULL,
+    KEY idx_model_product_status (product_code, status),
+    KEY idx_model_algo (algorithm)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE predictions (
+    prediction_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    model_id BIGINT UNSIGNED NOT NULL,
+    product_code VARCHAR(32) NOT NULL,
+    as_of_draw_id BIGINT UNSIGNED NOT NULL,
+    predicted_draw_no BIGINT UNSIGNED NOT NULL,
+    predicted_draw_date DATE NOT NULL,
+    probabilities_json JSON NOT NULL,
+    top6_json JSON NOT NULL,
+    actual_top6_json JSON NULL,
+    actual_bonus_number TINYINT UNSIGNED NULL,
+    hit_count_main TINYINT UNSIGNED NULL,
+    hit_bonus TINYINT(1) NULL,
+    request_type VARCHAR(16) NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    generated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    reconciled_at DATETIME(6) NULL,
+    UNIQUE KEY uk_prediction_once (model_id, product_code, predicted_draw_no, request_type),
+    KEY idx_prediction_pending (product_code, status, predicted_draw_date),
+    CONSTRAINT fk_predictions_model
+        FOREIGN KEY (model_id) REFERENCES models(model_id),
+    CONSTRAINT fk_predictions_asof_draw
+        FOREIGN KEY (as_of_draw_id) REFERENCES draws(draw_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE metrics (
+    metric_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    model_id BIGINT UNSIGNED NOT NULL,
+    product_code VARCHAR(32) NOT NULL,
+    eval_scope VARCHAR(32) NOT NULL,
+    fold_no SMALLINT UNSIGNED NULL,
+    period_from_draw_id BIGINT UNSIGNED NULL,
+    period_to_draw_id BIGINT UNSIGNED NULL,
+    precision_at_6 DECIMAL(10,6) NULL,
+    top_k_accuracy DECIMAL(10,6) NULL,
+    log_loss DECIMAL(14,8) NULL,
+    brier_score DECIMAL(14,8) NULL,
+    metric_json JSON NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    KEY idx_metrics_model_scope (model_id, eval_scope),
+    CONSTRAINT fk_metrics_model
+        FOREIGN KEY (model_id) REFERENCES models(model_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE retrain_jobs (
+    job_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    product_code VARCHAR(32) NOT NULL,
+    trigger_reason VARCHAR(128) NOT NULL,
+    request_payload_json JSON NULL,
+    status VARCHAR(16) NOT NULL,
+    started_at DATETIME(6) NULL,
+    finished_at DATETIME(6) NULL,
+    best_model_id BIGINT UNSIGNED NULL,
+    log_uri VARCHAR(512) NULL,
+    error_message TEXT NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    KEY idx_retrain_status (product_code, status, created_at),
+    CONSTRAINT fk_retrain_best_model
+        FOREIGN KEY (best_model_id) REFERENCES models(model_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+## Stack ML và quy trình huấn luyện
+
+Với stack ML, nên phân lớp rõ ràng giữa **baseline**, **main model**, và **challenger**. Baseline của `scikit-learn` gồm `DummyClassifier` để so sánh mốc tối thiểu, `LogisticRegression` để có một mô hình xác suất dễ giải thích, và `RandomForestClassifier` để có baseline phi tuyến. `DummyClassifier` trong tài liệu chính thức được thiết kế đúng cho mục đích baseline; `LogisticRegression` là linear classifier có regularization mặc định; còn `RandomForestClassifier` dùng averaging trên nhiều cây để cải thiện predictive accuracy và kiểm soát overfitting. citeturn32view2turn29search0turn34search12
+
+Ở lớp boosting, **LightGBM** nên là ứng viên chính cho production vì rất phù hợp với feature numeric/tabular; nhưng cần chú ý rằng tài liệu chính thức nhấn mạnh thuật toán **leaf-wise** có thể overfit nếu không khống chế `num_leaves`, `max_depth`, `min_data_in_leaf`, cũng như quan hệ `learning_rate`–`num_iterations`. **XGBoost** nên được giữ như challenger song song; tài liệu chính thức cho thấy `XGBClassifier` mặc định dùng `binary:logistic`, hỗ trợ `predict_proba()`, và có `save_model()` với định dạng JSON/UBJSON để bảo toàn thêm auxiliary attributes của Python object. citeturn7view0turn7view1turn7view2turn9view3turn9view1turn9view2
+
+`scikit-learn` nên là lớp điều phối preprocessing và baseline training. `Pipeline` rất quan trọng vì nó cho phép chain nhiều transformer và predictor thành một đối tượng duy nhất, đồng thời giúp tránh leakage trong cross-validation. Với các nhánh tuyến tính như LogisticRegression, tài liệu preprocessing của scikit-learn nêu rõ nhiều learning algorithm, đặc biệt linear model, hưởng lợi từ việc standardization. Do đó, khuyến nghị là dùng **hai pipeline huấn luyện khác nhau**: một pipeline có scaler cho linear baseline, và một pipeline không scaler cho tree/boosting. citeturn32view0turn32view1
+
+Thứ tự huấn luyện nên là: **build features → chia holdout cuối chuỗi → rolling backtest bằng expanding window → randomized search có giới hạn → refit champion trên tập train+valid → persist artifact + metadata**. `TimeSeriesSplit` là lựa chọn phù hợp cho phần rolling backtest; còn `RandomizedSearchCV` thường có đặc tính tốt hơn exhaustive grid search khi đội ngũ muốn giới hạn số cấu hình cần thử. Nếu xác suất đầu ra là trọng tâm để xếp hạng Top-6, nên giữ một nhánh **probability calibration** ở holdout cuối, vì scikit-learn nêu rõ không phải classifier nào cũng cho xác suất được hiệu chuẩn tốt. citeturn36search0turn34search5turn33search2
+
+| Thành phần | Khuyến nghị | Vai trò | Ghi chú |
+|---|---|---|---|
+| Baseline tối thiểu | `DummyClassifier` | Mốc so sánh | Nếu mô hình mạnh không vượt baseline thì phải xem lại feature/data citeturn32view2 |
+| Baseline giải thích được | `LogisticRegression` | Xác suất đơn giản, dễ kiểm tra | Nên đi cùng scaler/pipeline citeturn29search0turn32view1turn32view0 |
+| Baseline phi tuyến | `RandomForestClassifier` | So sánh với boosting | Kiểm soát overfit bằng averaging citeturn34search12 |
+| Main boosting | `lightgbm.LGBMClassifier` / `Booster` | Ứng viên production | Theo dõi `num_leaves`, `min_data_in_leaf`, `learning_rate`, `num_iterations` citeturn6view0turn7view0turn7view1turn7view2 |
+| Challenger | `xgboost.XGBClassifier` | Benchmark song song | `binary:logistic`, `predict_proba`, `save_model` JSON/UBJSON citeturn9view3turn9view1 |
+| Persistence | Native `save_model` + `joblib` | Lưu artifact | `joblib.load` không dùng cho nguồn không tin cậy citeturn8view0turn29search3turn29search15 |
+
+## Sinh dự đoán, đánh giá và báo cáo
+
+Quy trình sinh dự đoán nên diễn ra theo một chuẩn cố định để dễ audit. Mỗi lần chạy prediction, hệ thống xác định `as_of_draw_id` là kỳ gần nhất đã có kết quả chính thức, build feature cho **toàn bộ candidate number**, gọi champion model để sinh **xác suất cho từng số**, sắp xếp giảm dần, lấy **Top-6** làm bộ số dự đoán và lưu thêm toàn bộ `probabilities_json` để phục vụ đối chiếu về sau. Với Power 6/55, bản đầu nên chỉ dự đoán **6 số chính**; bonus number là nhánh mở rộng phase sau do cơ chế quay riêng. citeturn27view0turn28search8
+
+Quy trình đối chiếu kết quả tự động gồm: đồng bộ kỳ quay mới; xác định bản ghi `predictions` đang ở trạng thái `pending_result`; nạp 6 số thực tế từ `draws`; tính `hit_count_main`; nếu là Power 6/55 thì đối chiếu thêm `actual_bonus_number`; sau đó cập nhật `predictions.reconciled_at`, ghi một dòng vào `metrics` với `eval_scope='live'`, và nếu metric trượt dưới ngưỡng hoặc đủ số kỳ mới thì tạo `retrain_jobs`. Điểm quan trọng là **prediction phải được lưu trước khi có kết quả**, nhờ đó hệ thống có audit trail minh bạch theo thời gian. Đây cũng là lý do phải lưu `generated_at`, `as_of_draw_id` và `model_id` trong cùng bản ghi dự đoán. citeturn30view0turn14view0
+
+Về đánh giá, nên dùng hai lớp metric. Lớp **draw-level** gồm `precision@6` và `top_k_accuracy` dạng nghiệp vụ. Theo định nghĩa precision của scikit-learn là `tp / (tp + fp)`, khi mô hình luôn phát ra đúng 6 dự đoán dương cho một kỳ quay thì có thể chuyên biệt hóa thành `precision@6 = số hit trong top-6 / 6`. Với `top_k_accuracy`, cần lưu ý rằng `top_k_accuracy_score` chuẩn của scikit-learn là cho bài toán single-label và không bao phủ multilabel; do đó với bài toán xổ số nên định nghĩa **custom business top_k_accuracy@k = |Actual ∩ TopK| / 6**, phản ánh tỷ lệ số trúng thật nằm trong Top-K xếp hạng xác suất. citeturn36search3turn33search0
+
+Lớp **candidate-level** gồm `log_loss` và `brier_score`, tính trên toàn bộ candidate row trong test/backtest. `log_loss` đo negative log-likelihood của xác suất dự đoán và phạt rất mạnh các dự đoán sai nhưng quá tự tin; `brier_score_loss` đo mean squared difference giữa xác suất dự đoán và kết quả thực tế, giá trị càng nhỏ càng tốt. Hai metric này hữu ích hơn accuracy thô khi mục tiêu chính là **xếp hạng xác suất** và **hiệu chuẩn xác suất**. Backtest nên dùng **rolling origin / expanding window**, thay vì random split, để bảo toàn tính nhân quả theo chuỗi thời gian. citeturn36search1turn36search2turn36search0
+
+Báo cáo chuẩn cho leader kỹ thuật nên có bốn nhóm đầu ra: **leaderboard model** theo holdout và rolling backtest; **đồ thị xu hướng precision@6/live hit** theo thời gian; **calibration report** cho xác suất candidate-level; và **distribution report** của hit-count 0–6. Nếu dùng MLflow, nên log cả metrics, parameter set, artifact report và alias champion/challenger để việc promote hoặc rollback model dễ kiểm soát hơn. citeturn30view0turn30view1turn33search2
+
+## Vận hành, versioning và retrain
+
+Về versioning, có hai mức trưởng thành. Mức tối thiểu là **lưu file + metadata**: model file trong `artifacts/models/...`, feature snapshot trong `artifacts/features/...`, report trong `artifacts/reports/...`, còn MySQL giữ `artifact_uri`, `feature_version`, `hyperparams_json`, `metrics_summary_json`, `model_checksum`, `status`. Mức khuyến nghị cao hơn là dùng **MLflow Tracking + Model Registry**, vì MLflow cho phép log run metadata, metrics, artifact; mặc định có thể lưu local `mlruns`, và backend store có thể đi với cơ sở dữ liệu tương thích SQLAlchemy như MySQL. Registry còn quản lý version, tags, aliases như `champion`/`challenger`. citeturn30view0turn30view1
+
+Về persistence, nên dùng **native serializer** cho boosting và **joblib** cho object scikit-learn thuần hoặc wrapper. LightGBM có `Booster.save_model()` và `dump_model()`; XGBoost có `save_model()` và tài liệu nêu rõ định dạng JSON/UBJSON là lựa chọn tốt nếu muốn giữ auxiliary attributes. Với `joblib`, tài liệu chính thức cảnh báo `joblib.load()` có thể thực thi mã tùy ý khi nạp file không tin cậy, nên tuyệt đối chỉ dùng artifact nội bộ có checksum. citeturn8view0turn9view1turn29search11turn29search15
+
+Về orchestration, kiến trúc hợp lý là **FastAPI + Celery + Redis + cron/Celery Beat + MySQL**. Celery là distributed task queue, hỗ trợ real-time processing và task scheduling; tài liệu “First Steps” nêu rõ nó cần một **message broker**, trong đó **Redis** là một lựa chọn phổ biến. Nếu đội ngũ chỉ chạy trên một host và lịch ít phức tạp, Linux `crontab` là đủ; nếu cần orchestration đa service thì dùng **Celery Beat**. Lưu ý từ tài liệu Celery: chỉ nên có **một scheduler** hoạt động cho một schedule tại một thời điểm, nếu không sẽ sinh task trùng. Cũng cần cấu hình timezone rõ ràng, vì Celery mặc định dùng UTC; còn `crontab(5)` hỗ trợ `CRON_TZ` cho cron table. citeturn19view0turn19view1turn20view2turn20view3turn31view0
+
+Nếu cần queue tùy biến ở mức thấp, **Redis Lists** có thể dùng để làm FIFO/LIFO task queue và hỗ trợ blocking operations như `BLPOP`/`BRPOP`; tuy nhiên không nên dùng Redis Pub/Sub cho workflow quan trọng cần bảo đảm delivery hơn mức at-most-once, vì tài liệu Redis nói rõ Pub/Sub có semantics at-most-once. Trong thực tế, nếu đã chọn Celery thì nên tận dụng luôn abstraction của Celery thay vì tự xây hàng đợi từ đầu. citeturn21view1turn21view2
+
+Cấu trúc thư mục đề xuất cho repo:
+
+```text
+project/
+  app/
+    api/
+    core/
+      config.yaml
+    db/
+      migrations/
+      mysql.py
+    crawlers/
+      vietlott_sms.py
+    features/
+      build_features.py
+      sliding_window.py
+    train/
+      train_baseline.py
+      train_lightgbm.py
+      train_xgboost.py
+      select_champion.py
+    predict/
+      generate_next_prediction.py
+    reconcile/
+      reconcile_results.py
+    reports/
+      backtest_report.py
+      live_metrics_report.py
+    workers/
+      celery_app.py
+      tasks.py
+  artifacts/
+    models/{product_code}/{model_version}/
+    features/{product_code}/{feature_version}/
+    reports/{product_code}/{run_id}/
+  logs/
+  sql/
+    schema.sql
+```
+
+Ví dụ cấu hình triển khai:
+
+```yaml
+app_name: vietlott-ml
+timezone: Asia/Ho_Chi_Minh
+
+database:
+  url: mysql+pymysql://user:pass@mysql:3306/vietlott_ml
+
+storage:
+  artifact_root: ./artifacts
+  model_root: ./artifacts/models
+  feature_root: ./artifacts/features
+  report_root: ./artifacts/reports
+
+products:
+  MEGA_645:
+    number_space: 45
+    top_n: 6
+    draw_days: [wed, fri, sun]
+    draw_time: "18:00"
+  POWER_655:
+    number_space: 55
+    top_n: 6
+    draw_days: [tue, thu, sat]
+    draw_time: "18:00"
+
+training:
+  window_sizes: [10, 20, 50, 100]
+  holdout_draws: 30
+  min_new_draws_for_retrain: 3
+  metric_guardrail_precision_at_6: 0.18
+
+models:
+  baseline: [dummy, logreg, random_forest]
+  challengers: [lightgbm, xgboost]
+
+scheduler:
+  prediction_cutoff_minutes_before_draw: 20
+  reconcile_delay_minutes_after_draw: 15
+```
+
+Ví dụ cron cho một deployment một máy. Lịch quay của Mega 6/45 là **thứ Tư, thứ Sáu, Chủ nhật lúc 18:00**; Power 6/55 là **thứ Ba, thứ Năm, thứ Bảy lúc 18:00**. Cú pháp cron dùng 5 trường thời gian-ngày và có thể gắn `CRON_TZ`. citeturn28search8turn27view0turn31view0
+
+```cron
+CRON_TZ=Asia/Ho_Chi_Minh
+
+# Mega 6/45: sinh dự đoán trước giờ quay 20 phút
+40 17 * * 3,5,0  cd /srv/vietlott-ml && python -m app.predict.generate_next_prediction --product=MEGA_645
+
+# Mega 6/45: lấy kết quả và đối chiếu sau giờ quay
+10 18 * * 3,5,0  cd /srv/vietlott-ml && python -m app.reconcile.reconcile_results --product=MEGA_645
+
+# Power 6/55: sinh dự đoán trước giờ quay 20 phút
+40 17 * * 2,4,6  cd /srv/vietlott-ml && python -m app.predict.generate_next_prediction --product=POWER_655
+
+# Power 6/55: lấy kết quả và đối chiếu sau giờ quay
+10 18 * * 2,4,6  cd /srv/vietlott-ml && python -m app.reconcile.reconcile_results --product=POWER_655
+
+# Kiểm tra điều kiện retrain mỗi đêm
+30 23 * * *      cd /srv/vietlott-ml && python -m app.train.select_champion --maybe-retrain
+```
+
+## Kế hoạch triển khai, checklist, rủi ro và hạn chế
+
+Một timeline hợp lý cho phiên bản đầu là **sáu tuần**, đi từ ingestion–DB–feature store đến backtest–API–operations. Với scope này, team có thể có một hệ thống đủ để leader kỹ thuật review thực chiến, nhưng vẫn giữ mức độ rủi ro thấp trước khi đầu tư sâu hơn vào calibration, explainability hoặc bonus-number branch. citeturn30view0turn19view0
+
+```mermaid
+gantt
+    title Timeline triển khai đề xuất
+    dateFormat  YYYY-MM-DD
+    axisFormat  %d/%m
+
+    section Nền tảng dữ liệu
+    Chốt schema MySQL và migration         :a1, 2026-06-08, 5d
+    Xây crawler + validate + dedupe        :a2, after a1, 5d
+
+    section Feature pipeline
+    Build sliding window + feature cache   :b1, after a2, 7d
+    Data split + backtest harness          :b2, after b1, 4d
+
+    section Modeling
+    Baseline scikit-learn                  :c1, after b2, 4d
+    LightGBM/XGBoost + tuning              :c2, after c1, 6d
+    Champion selection + report            :c3, after c2, 3d
+
+    section Vận hành
+    API nội bộ + worker queue              :d1, after c1, 6d
+    Reconcile + metrics live               :d2, after d1, 4d
+    Scheduler + artifact/versioning        :d3, after d2, 3d
+
+    section Hoàn thiện
+    Hardening + UAT + handover             :e1, after c3, 5d
+```
+
+Checklist triển khai nên tối thiểu gồm các điểm sau:
+
+- Có **schema migration** và dữ liệu mẫu cho cả Mega 6/45 lẫn Power 6/55.
+- Có **crawler idempotent** và test parser cho thay đổi HTML/source payload.
+- Có **feature builder** tái lập được từ `draws` sang `features`.
+- Có **baseline report** chứng minh model mạnh vượt `DummyClassifier`.
+- Có **rolling backtest** theo time order, không dùng random split.
+- Có **artifact checksum**, retention policy, và quy trình rollback champion.
+- Có **audit trail**: `as_of_draw_id`, `generated_at`, `model_id`, `source_url`.
+- Có **guardrail vận hành**: không auto-bet, không gửi SMS thay người dùng, không dùng model file không tin cậy.
+
+Rủi ro lớn nhất là **bản chất ngẫu nhiên của kết quả quay số**. Ở cả Mega 6/45 và Power 6/55, sản phẩm được mô tả theo cơ chế quay số để lựa chọn bộ số trúng thưởng từ tập bóng hữu hạn; với candidate-level dataset, mỗi kỳ chỉ có **6 số dương** trên **45 hoặc 55 ứng viên**, tức tín hiệu dương vốn đã mỏng. Điều này khiến hệ thống rất dễ sinh ra “mẫu đẹp trên dữ liệu quá khứ” nhưng không tái lập được trên dữ liệu live. Vì vậy, mọi kết luận phải đi qua **rolling backtest**, **holdout cuối chuỗi**, và **theo dõi live metrics dài hạn** thay vì nhìn một vài kỳ hit cao lẻ tẻ. citeturn28search8turn27view0turn36search0
+
+Rủi ro lớn thứ hai là **overfit kỹ thuật**. LightGBM dùng leaf-wise growth và tài liệu chính thức cảnh báo điều này có thể dẫn tới overfitting nếu không chỉnh `num_leaves`, `max_depth`, `min_data_in_leaf` hợp lý. Với XGBoost, dù ổn định và giàu tính năng, nhánh multi-output hiện vẫn còn experimental nên nếu dùng sai abstraction, hệ thống sẽ khó debug và khó bảo trì. Vì thế, phiên bản đầu nên ưu tiên bài toán **binary candidate-level** và cấu hình đơn giản, reproducible trước khi nghĩ đến thiết kế phức tạp hơn. citeturn7view0turn7view2turn38view1
+
+Rủi ro cuối cùng là **đạo đức, pháp lý và vận hành**. Vietlott SMS giới hạn người tham gia ở nhóm **từ đủ 18 tuổi** và có **giới hạn tham gia dự thưởng theo ngày** cho nhóm sản phẩm ma trận; do đó hệ thống nội bộ không nên chuyển hóa thành công cụ kích thích mua tự động hoặc gia tăng tần suất tham gia. Ngoài ra, nếu dùng `joblib` để nạp artifact từ nguồn không kiểm soát, hệ thống có nguy cơ bảo mật rõ rệt. Kết luận phù hợp cho leader kỹ thuật là: **xây hệ thống như một nền tảng học tập/backtest có kiểm soát, chứ không đóng gói như một sản phẩm “AI thắng xổ số”**. citeturn28search0turn28search9turn28search10turn29search15

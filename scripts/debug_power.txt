@@ -1,0 +1,13 @@
+POWER_655 Elements:
+h5: 'Kỳ quay thưởng#01355ngày06/06/2026'
+h5: 'Từ 18h00 – 18h30 Thứ 3 - Thứ 5 - Thứ 7'
+h5: 'Giá trị Jackpot 1'
+h5: 'Giá trị Jackpot 2'
+h5: '18+'
+span class='bong_tron small': '03'
+span class='bong_tron small': '11'
+span class='bong_tron small': '16'
+span class='bong_tron small': '37'
+span class='bong_tron small': '39'
+span class='bong_tron small': '41'
+span class='bong_tron small no-margin-right active': '28'

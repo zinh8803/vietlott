@@ -1,0 +1,33 @@
+app_name: vietlott-ml
+timezone: Asia/Ho_Chi_Minh
+
+products:
+  MEGA_645:
+    number_space: 45
+    top_n: 6
+    draw_days: [wed, fri, sun]
+    draw_time: "18:00"
+  POWER_655:
+    number_space: 55
+    top_n: 6
+    draw_days: [tue, thu, sat]
+    draw_time: "18:00"
+  BINGO18:
+    number_space: 6
+    top_n: 3
+    draw_days: [mon, tue, wed, thu, fri, sat, sun]
+    draw_time: "every_10_minutes"
+
+training:
+  window_sizes: [10, 20, 50, 100]
+  holdout_draws: 30
+  min_new_draws_for_retrain: 3
+  metric_guardrail_precision_at_6: 0.18
+
+models:
+  baseline: [dummy, logreg, random_forest]
+  challengers: [lightgbm, xgboost]
+
+scheduler:
+  prediction_cutoff_minutes_before_draw: 20
+  reconcile_delay_minutes_after_draw: 15
