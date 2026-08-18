@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Predictions from './pages/Predictions';
 import Models from './pages/Models';
@@ -19,6 +19,69 @@ function getSessionUser() {
   } catch {
     return null;
   }
+}
+
+function SEOTracker() {
+  const location = useLocation();
+
+  useEffect(() => {
+    const seoMap = {
+      '/': {
+        title: 'VietlotAI – In Vé Số Dự Đoán AI Thông Minh',
+        description: 'Tạo vé số dự đoán thông minh Vietlott (Mega 6/45, Power 6/55, Bingo18) bằng thuật toán Weighted Random Sampling & AI Machine Learning.'
+      },
+      '/dashboard': {
+        title: 'Dashboard – VietlotAI ML Prediction System',
+        description: 'Tổng quan hệ thống dự đoán xổ số Vietlott, thống kê độ chính xác Precision@6 và mô hình Champion.'
+      },
+      '/predictions': {
+        title: 'Lịch Sử Dự Đoán AI – VietlotAI',
+        description: 'Xem lại toàn bộ danh sách các bộ số dự đoán AI cho các kỳ quay Vietlott Mega, Power và Bingo18.'
+      },
+      '/draws': {
+        title: 'Lịch Sử Kết Quả Xổ Số – VietlotAI',
+        description: 'Tra cứu kết quả các kỳ quay số Vietlott chính thức Mega 6/45, Power 6/55 và Bingo18 mới nhất.'
+      },
+      '/login': {
+        title: 'Đăng Nhập / Đăng Ký – VietlotAI',
+        description: 'Đăng nhập hoặc đăng ký tài khoản VietlotAI để nhận hạn ngạch in vé dự đoán hàng ngày.'
+      },
+      '/admin': {
+        title: 'Quản Lý Admin – VietlotAI',
+        description: 'Trang quản trị hệ thống, cấp hạn ngạch in vé cho người dùng và theo dõi hoạt động.'
+      },
+      '/models': {
+        title: 'Quản Lý Mô Hình ML – VietlotAI',
+        description: 'Bảng xếp hạng Leaderboard các mô hình Machine Learning: Baseline, LightGBM, XGBoost.'
+      },
+      '/controls': {
+        title: 'Bảng Điều Khiển Pipeline – VietlotAI',
+        description: 'Kích hoạt crawler đồng bộ kết quả, build sliding-window features, huấn luyện mô hình và đối chiếu.'
+      }
+    };
+
+    const currentSeo = seoMap[location.pathname] || {
+      title: 'VietlotAI – Hệ Thống AI Dự Đoán Xổ Số Vietlott Thông Minh',
+      description: 'Hệ thống phân tích Machine Learning & AI dự đoán kết quả xổ số Vietlott (Mega 6/45, Power 6/55, Bingo18).'
+    };
+
+    document.title = currentSeo.title;
+
+    const metaDesc = document.querySelector('meta[name="description"]');
+    if (metaDesc) {
+      metaDesc.setAttribute('content', currentSeo.description);
+    }
+    const ogTitle = document.querySelector('meta[property="og:title"]');
+    if (ogTitle) {
+      ogTitle.setAttribute('content', currentSeo.title);
+    }
+    const ogDesc = document.querySelector('meta[property="og:description"]');
+    if (ogDesc) {
+      ogDesc.setAttribute('content', currentSeo.description);
+    }
+  }, [location.pathname]);
+
+  return null;
 }
 
 function ProtectedRoute({ children, currentUser, requireAdmin }) {
@@ -125,6 +188,7 @@ function App() {
 
   return (
     <BrowserRouter>
+      <SEOTracker />
       <div className={showSidebar ? "app-wrapper" : "user-portal-layout"}>
         {showSidebar && <Sidebar apiOnline={apiOnline} currentUser={currentUser} onLogout={handleLogout} />}
         <main className={showSidebar ? "main-content" : "main-content user-portal-main"}>
@@ -181,3 +245,4 @@ function App() {
 }
 
 export default App;
+
