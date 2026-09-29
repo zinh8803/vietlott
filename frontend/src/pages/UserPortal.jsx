@@ -323,7 +323,7 @@ export default function UserPortal({ currentUser, setCurrentUser, onLogout, apiO
       <main className="user-portal-body animate-in">
         
         {/* Banner chào mừng & Quota Card */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 1.2fr', gap: '20px', marginBottom: '24px' }} className="grid-2">
+        <div className="user-hero-container mb-6">
           
           <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             <h2 style={{ fontSize: 24, fontWeight: 900, marginBottom: 8, background: 'linear-gradient(90deg, #ffffff, #93c5fd)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
@@ -420,7 +420,7 @@ export default function UserPortal({ currentUser, setCurrentUser, onLogout, apiO
               </div>
             )}
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, gap: 16 }} className="flex-col items-center">
+            <div className="user-section-header mb-6">
               <div>
                 <h3 style={{ fontSize: 18, fontWeight: 800, color: 'white', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Ticket size={20} style={{ color: '#3b82f6' }} /> Bảng điều khiển in vé AI
@@ -522,7 +522,7 @@ export default function UserPortal({ currentUser, setCurrentUser, onLogout, apiO
                 </div>
 
                 {/* History filter tab */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, gap: 16 }} className="flex-col items-center">
+                <div className="user-history-toolbar mb-6">
                   <div className="history-filter-tabs">
                     <button className={`history-filter-tab ${historyFilter === 'ALL' ? 'active' : ''}`} onClick={() => setHistoryFilter('ALL')}>Tất cả</button>
                     <button className={`history-filter-tab ${historyFilter === 'MEGA_645' ? 'active' : ''}`} onClick={() => setHistoryFilter('MEGA_645')}>Mega 6/45</button>

@@ -179,7 +179,7 @@ export default function Draws() {
         {loading ? (
           <div className="loader-wrap"><div className="spin">⏳</div> Đang tải...</div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 16, alignItems: 'start' }}>
+          <div className="responsive-split-grid draw-split-grid">
             {/* Draw history */}
             <div className="card animate-in">
               <div className="card-body flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)', paddingBottom: 16, marginBottom: 0 }}>

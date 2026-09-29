@@ -126,7 +126,7 @@ export default function AdminPortal() {
               <div className="card">
                 <div className="card-body">
                   <div className="chart-title">Thong tin admin</div>
-                  <div className="stat-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                  <div className="stat-grid">
                     <div>
                       <div className="stat-label">Tai khoan</div>
                       <div className="font-bold">{admin?.display_name || 'Admin'}</div>

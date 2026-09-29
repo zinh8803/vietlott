@@ -94,7 +94,7 @@ function ProtectedRoute({ children, currentUser, requireAdmin }) {
   return children;
 }
 
-function Sidebar({ apiOnline, currentUser, onLogout }) {
+function Sidebar({ apiOnline, currentUser, onLogout, mobileOpen, onMobileClose }) {
   const navItems = [
     { to: '/dashboard',   icon: '⚡', label: 'Dashboard' },
     { to: '/predictions', icon: '🎯', label: 'Dự đoán' },
@@ -106,62 +106,70 @@ function Sidebar({ apiOnline, currentUser, onLogout }) {
   ];
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-logo">
-        <div className="logo-badge">
-          <div className="logo-icon">🎰</div>
-          <div>
-            <div className="logo-text">VietlotAI</div>
-            <div className="logo-sub">ML Prediction System</div>
-          </div>
-        </div>
-      </div>
-
-      <nav className="sidebar-nav">
-        <div className="nav-section-label">Navigation</div>
-        {navItems.map(item => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === '/dashboard'}
-            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-          >
-            <span className="nav-icon">{item.icon}</span>
-            <span>{item.label}</span>
-          </NavLink>
-        ))}
-      </nav>
-
-      <div className="sidebar-footer">
-        {currentUser ? (
-          <div className="user-profile-summary animate-in">
-            <div className="user-profile-info">
-              <div className="user-profile-name" title={currentUser.display_name}>
-                {currentUser.display_name}
-              </div>
-              <div className="user-profile-role">
-                {currentUser.role === 'admin' 
-                  ? 'Admin System' 
-                  : `Hạn vé: ${currentUser.remaining_today ?? 0}/${currentUser.daily_ticket_limit}`}
-              </div>
+    <>
+      {mobileOpen && <div className="sidebar-backdrop" onClick={onMobileClose} />}
+      <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
+        <div className="sidebar-logo">
+          <div className="logo-badge">
+            <div className="logo-icon">🎰</div>
+            <div>
+              <div className="logo-text">VietlotAI</div>
+              <div className="logo-sub">ML Prediction System</div>
             </div>
-            <button className="btn-logout-icon" onClick={onLogout} title="Đăng xuất">
-              🚪
-            </button>
           </div>
-        ) : null}
-        <div className="api-status" style={{ marginTop: currentUser ? 8 : 0 }}>
-          <div className={`status-dot ${apiOnline ? '' : 'offline'}`} />
-          <span>{apiOnline ? 'API Connected' : 'API Offline'}</span>
+          <button className="mobile-close-btn" onClick={onMobileClose} aria-label="Đóng menu">
+            ✕
+          </button>
         </div>
-      </div>
-    </aside>
+
+        <nav className="sidebar-nav">
+          <div className="nav-section-label">Navigation</div>
+          {navItems.map(item => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.to === '/dashboard'}
+              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+              onClick={onMobileClose}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-label">{item.label}</span>
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="sidebar-footer">
+          {currentUser ? (
+            <div className="user-profile-summary animate-in">
+              <div className="user-profile-info">
+                <div className="user-profile-name" title={currentUser.display_name}>
+                  {currentUser.display_name}
+                </div>
+                <div className="user-profile-role">
+                  {currentUser.role === 'admin' 
+                    ? 'Admin System' 
+                    : `Hạn vé: ${currentUser.remaining_today ?? 0}/${currentUser.daily_ticket_limit}`}
+                </div>
+              </div>
+              <button className="btn-logout-icon" onClick={onLogout} title="Đăng xuất">
+                🚪
+              </button>
+            </div>
+          ) : null}
+          <div className="api-status" style={{ marginTop: currentUser ? 8 : 0 }}>
+            <div className={`status-dot ${apiOnline ? '' : 'offline'}`} />
+            <span>{apiOnline ? 'API Connected' : 'API Offline'}</span>
+          </div>
+        </div>
+      </aside>
+    </>
   );
 }
 
 function App() {
   const [apiOnline, setApiOnline] = useState(false);
   const [currentUser, setCurrentUser] = useState(() => getSessionUser());
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     API.get('/health')
@@ -190,7 +198,31 @@ function App() {
     <BrowserRouter>
       <SEOTracker />
       <div className={showSidebar ? "app-wrapper" : "user-portal-layout"}>
-        {showSidebar && <Sidebar apiOnline={apiOnline} currentUser={currentUser} onLogout={handleLogout} />}
+        {showSidebar && (
+          <>
+            {/* Top mobile header bar when sidebar is used */}
+            <header className="mobile-admin-header">
+              <button 
+                className="mobile-hamburger-btn" 
+                onClick={() => setMobileNavOpen(true)}
+                aria-label="Mở Menu"
+              >
+                ☰ Menu
+              </button>
+              <div className="mobile-admin-logo">
+                <span>🎰 VietlotAI Admin</span>
+              </div>
+            </header>
+
+            <Sidebar 
+              apiOnline={apiOnline} 
+              currentUser={currentUser} 
+              onLogout={handleLogout} 
+              mobileOpen={mobileNavOpen}
+              onMobileClose={() => setMobileNavOpen(false)}
+            />
+          </>
+        )}
         <main className={showSidebar ? "main-content" : "main-content user-portal-main"}>
           <Routes>
             <Route path="/"             element={

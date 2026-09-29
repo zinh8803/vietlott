@@ -179,7 +179,7 @@ export default function Controls() {
           Kết quả quay số là ngẫu nhiên hoàn toàn. Xổ số chỉ dành cho người từ đủ 18 tuổi.
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 16, alignItems: 'start' }}>
+        <div className="responsive-split-grid control-split-grid">
           {/* Steps */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {steps.map(s => (

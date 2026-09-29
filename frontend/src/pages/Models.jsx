@@ -88,7 +88,7 @@ export default function Models() {
         {loading ? (
           <div className="loader-wrap"><div className="spin">⏳</div> Đang tải...</div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16 }}>
+          <div className="responsive-split-grid model-split-grid">
             {/* Main panel */}
             <div>
               {/* Chart */}
