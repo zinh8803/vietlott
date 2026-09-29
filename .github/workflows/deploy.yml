@@ -19,7 +19,7 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT }}
           script: |
-            cd /var/www/vietlott
+            cd /var/www/vietlott/vietlott
             git pull origin main
             
             # Cập nhật backend & restart service
